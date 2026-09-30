@@ -1,5 +1,6 @@
 .venv/
 .env
+deploy-secrets.txt
 __pycache__/
 .pytest_cache/
 evals/results/

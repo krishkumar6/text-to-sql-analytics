@@ -38,14 +38,19 @@ def main() -> None:
         sys.exit("Set DATABASE_ADMIN_URL to the owner connection string of the target database.")
     local = urlsplit(admin_url).hostname in ("localhost", "127.0.0.1", "db")
     passwords = {
-        "analytics_ro": os.getenv("ANALYTICS_RO_PASSWORD") or ("analytics_ro" if local else secrets.token_urlsafe(24)),
-        "app_logger": os.getenv("APP_LOGGER_PASSWORD") or ("app_logger" if local else secrets.token_urlsafe(24)),
+        "analytics_ro": os.getenv("ANALYTICS_RO_PASSWORD") or ("analytics_ro" if local else secrets.token_urlsafe(32)),
+        "app_logger": os.getenv("APP_LOGGER_PASSWORD") or ("app_logger" if local else secrets.token_urlsafe(32)),
     }
 
     with psycopg.connect(admin_url, autocommit=True) as conn:
-        conn.execute((ROOT / "db" / "init" / "01_roles.sql").read_text(encoding="utf-8"))
+        # Create/update the roles with their real passwords *before* running 01_roles.sql. Its CREATE ROLE
+        # (with dev passwords) then finds them existing and is skipped. Hosted Postgres such as Neon rejects
+        # weak passwords outright, so the dev passwords must never be sent there.
         for role, password in passwords.items():
-            conn.execute(sql.SQL("ALTER ROLE {} PASSWORD {}").format(sql.Identifier(role), sql.Literal(password)))
+            exists = conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone()
+            template = "ALTER ROLE {} LOGIN PASSWORD {}" if exists else "CREATE ROLE {} LOGIN PASSWORD {}"
+            conn.execute(sql.SQL(template).format(sql.Identifier(role), sql.Literal(password)))
+        conn.execute((ROOT / "db" / "init" / "01_roles.sql").read_text(encoding="utf-8"))
     print("Roles and ops.query_traces ready.")
 
     os.environ["DATABASE_ADMIN_URL"] = admin_url
