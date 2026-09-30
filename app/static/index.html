@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Text-to-SQL Analytics</title>
+<script src="/plotly.min.js" defer></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #667085; --border: #e3e6eb;
+    --accent: #3b5bdb; --accent-soft: #edf1ff; --ok: #2f9e44; --warn: #e8590c; --err: #c92a2a;
+    --code-bg: #f3f4f7; --radius: 10px;
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --text: #e6e8ec; --muted: #98a2b3; --border: #2b313c;
+      --accent: #748ffc; --accent-soft: #232a3d; --code-bg: #141821;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+  header { display: flex; align-items: center; gap: 10px; padding: 14px 24px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .dot.up { background: var(--ok); } .dot.down { background: var(--err); }
+  header .muted { margin-left: auto; }
+  .layout { display: grid; grid-template-columns: 260px 1fr; gap: 20px; padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+  aside, .card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
+  aside { padding: 14px; align-self: start; position: sticky; top: 20px; max-height: calc(100vh - 100px); overflow: auto; }
+  aside h2, .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; font-weight: 600; }
+  details { border-top: 1px solid var(--border); padding: 6px 0; }
+  details:first-of-type { border-top: 0; }
+  summary { cursor: pointer; font-weight: 500; display: flex; justify-content: space-between; list-style: none; }
+  summary::-webkit-details-marker { display: none; }
+  details ul { margin: 6px 0 4px; padding: 0 0 0 4px; list-style: none; }
+  details li { font-family: ui-monospace, Consolas, monospace; font-size: 12px; padding: 2px 0; color: var(--muted); }
+  details li b { color: var(--text); font-weight: 500; }
+  main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .card { padding: 16px; }
+  textarea { width: 100%; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font: inherit; color: var(--text); background: var(--panel); resize: vertical; }
+  textarea:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  #question { min-height: 64px; font-size: 15px; }
+  #sql { min-height: 140px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; background: var(--code-bg); }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .row.end { justify-content: flex-end; }
+  button { font: inherit; border-radius: 8px; border: 1px solid var(--border); background: var(--panel); color: var(--text); padding: 7px 14px; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 500; }
+  button:disabled { opacity: .55; cursor: default; }
+  .chip { font-size: 12.5px; padding: 5px 10px; border-radius: 999px; background: var(--accent-soft); border-color: transparent; }
+  .muted { color: var(--muted); }
+  .summary { font-size: 17px; line-height: 1.45; margin: 0 0 8px; font-weight: 500; }
+  .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .badge { font-size: 12px; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+  .badge.high { color: var(--ok); border-color: currentColor; }
+  .badge.medium { color: var(--warn); border-color: currentColor; }
+  .badge.low, .badge.err { color: var(--err); border-color: currentColor; }
+  .notice { border-left: 3px solid var(--warn); padding: 8px 12px; background: var(--accent-soft); border-radius: 6px; margin: 8px 0; }
+  .notice.err { border-color: var(--err); }
+  ul.assumptions { margin: 6px 0 0; padding-left: 18px; color: var(--muted); }
+  #chart { width: 100%; min-height: 360px; }
+  .table-wrap { overflow: auto; max-height: 460px; border: 1px solid var(--border); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--code-bg); font-weight: 600; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .hidden { display: none !important; }
+  .spinner { width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .feedback button { padding: 4px 10px; }
+  .feedback button.chosen { background: var(--accent-soft); border-color: var(--accent); }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: 1fr; padding: 16px; }
+    aside { position: static; max-height: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <span class="dot" id="health"></span>
+  <h1>Text-to-SQL Analytics</h1>
+  <span class="muted" id="model"></span>
+</header>
+
+<div class="layout">
+  <aside>
+    <h2>Tables</h2>
+    <div id="tables" class="muted">Loading…</div>
+  </aside>
+
+  <main>
+    <section class="card">
+      <textarea id="question" placeholder="Ask a question about your data, e.g. What is MRR by plan this month?"></textarea>
+      <div class="row" style="margin-top:10px">
+        <div class="row" id="examples"></div>
+        <span style="flex:1"></span>
+        <span class="spinner hidden" id="spinner"></span>
+        <button class="primary" id="ask">Ask</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="answer">
+      <p class="summary" id="summary"></p>
+      <div class="badges" id="badges"></div>
+      <div id="notice"></div>
+      <p class="muted" id="explanation" style="margin:6px 0 0"></p>
+      <ul class="assumptions" id="assumptions"></ul>
+      <div class="row end feedback" style="margin-top:10px">
+        <span class="muted" id="feedback-label">Was this right?</span>
+        <button data-rating="1" title="Correct">👍</button>
+        <button data-rating="-1" title="Wrong">👎</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="chart-card">
+      <div id="chart"></div>
+    </section>
+
+    <section class="card hidden" id="sql-card">
+      <h2>SQL <span class="muted" style="text-transform:none;letter-spacing:0">— edit and re-run; the same read-only checks apply</span></h2>
+      <textarea id="sql" spellcheck="false"></textarea>
+      <div class="row end" style="margin-top:8px">
+        <button id="copy">Copy</button>
+        <button class="primary" id="run">Run SQL</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="table-card">
+      <h2 id="table-title">Results</h2>
+      <div class="table-wrap"><table id="results"></table></div>
+    </section>
+  </main>
+</div>
+
+<script>
+const EXAMPLES = [
+  "What is current MRR by plan?",
+  "Monthly signups and free-to-paid conversion rate by signup month",
+  "Which countries bring the most paying customers?",
+  "Monthly logo churn rate over the last 6 months",
+  "Daily active users in September 2026, split by platform",
+];
+const $ = (id) => document.getElementById(id);
+let current = null;
+
+function esc(v) {
+  return String(v).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function fmt(v) {
+  if (v === null || v === undefined) return '<span class="muted">NULL</span>';
+  if (typeof v === "number") return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  if (typeof v === "object") return esc(JSON.stringify(v));
+  return esc(v);
+}
+function setBusy(busy) {
+  $("spinner").classList.toggle("hidden", !busy);
+  $("ask").disabled = $("run").disabled = busy;
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : res.statusText);
+  return data;
+}
+
+async function ask() {
+  const question = $("question").value.trim();
+  if (question.length < 3) return;
+  setBusy(true);
+  try { render(await api("/ask", { question })); }
+  catch (e) { renderError(e.message); }
+  finally { setBusy(false); }
+}
+
+async function runSql() {
+  const sql = $("sql").value.trim();
+  if (!sql) return;
+  setBusy(true);
+  try { render(await api("/run", { sql, question: $("question").value.trim() })); }
+  catch (e) { renderError(e.message); }
+  finally { setBusy(false); }
+}
+
+function renderError(message) {
+  current = null;
+  $("answer").classList.remove("hidden");
+  $("summary").textContent = "Something went wrong";
+  $("badges").innerHTML = "";
+  $("notice").innerHTML = `<div class="notice err">${esc(message)}</div>`;
+  $("explanation").textContent = "";
+  $("assumptions").innerHTML = "";
+  ["chart-card", "table-card"].forEach(id => $(id).classList.add("hidden"));
+}
+
+function render(r) {
+  current = r;
+  $("answer").classList.remove("hidden");
+  document.querySelectorAll(".feedback button").forEach(b => b.classList.remove("chosen"));
+  $("feedback-label").textContent = "Was this right?";
+
+  const headline = {
+    ok: r.summary || `${r.row_count} row${r.row_count === 1 ? "" : "s"} returned.`,
+    clarification: r.clarifying_question,
+    rejected: "The query was blocked by the safety checks.",
+    error: "The query failed.",
+  }[r.status];
+  $("summary").textContent = headline;
+
+  const badges = [];
+  if (r.confidence) badges.push(`<span class="badge ${esc(r.confidence)}">${esc(r.confidence)} confidence</span>`);
+  if (r.status === "ok") badges.push(`<span class="badge">${r.row_count.toLocaleString()}${r.truncated ? "+" : ""} rows</span>`);
+  if (r.attempts > 1) badges.push(`<span class="badge medium">repaired after 1 failed attempt</span>`);
+  badges.push(`<span class="badge">${(r.latency_ms / 1000).toFixed(1)} s</span>`);
+  if (r.usage.llm_calls) badges.push(`<span class="badge" title="${r.usage.cache_read_tokens.toLocaleString()} input tokens from cache">${r.usage.input_tokens.toLocaleString()} in / ${r.usage.output_tokens.toLocaleString()} out tokens</span>`);
+  $("badges").innerHTML = badges.join("");
+
+  let notice = "";
+  if (r.status === "clarification") notice = `<div class="notice">Add the missing detail to your question and ask again.</div>`;
+  if (r.error) notice = `<div class="notice err">${esc(r.error)}</div>`;
+  if (r.truncated) notice += `<div class="notice">Only the first ${r.row_count.toLocaleString()} rows were returned (row cap).</div>`;
+  $("notice").innerHTML = notice;
+
+  $("explanation").textContent = r.explanation || "";
+  $("assumptions").innerHTML = (r.assumptions || []).map(a => `<li>${esc(a)}</li>`).join("");
+
+  $("sql-card").classList.toggle("hidden", !r.sql);
+  if (r.sql) $("sql").value = r.sql;
+
+  const hasRows = r.status === "ok";
+  $("table-card").classList.toggle("hidden", !hasRows);
+  if (hasRows) renderTable(r);
+
+  $("chart-card").classList.toggle("hidden", !r.chart);
+  if (r.chart && window.Plotly) {
+    const layout = { ...r.chart.layout, autosize: true, paper_bgcolor: "rgba(0,0,0,0)", plot_bgcolor: "rgba(0,0,0,0)" };
+    if (matchMedia("(prefers-color-scheme: dark)").matches) layout.font = { ...(layout.font || {}), color: "#e6e8ec" };
+    Plotly.react("chart", r.chart.data, layout, { responsive: true, displaylogo: false });
+  }
+}
+
+function renderTable(r) {
+  const numeric = r.columns.map((_, i) => r.rows.some(row => typeof row[i] === "number"));
+  const head = `<thead><tr>${r.columns.map((c, i) => `<th class="${numeric[i] ? "num" : ""}">${esc(c)}</th>`).join("")}</tr></thead>`;
+  const body = r.rows.map(row => `<tr>${row.map((v, i) => `<td class="${numeric[i] ? "num" : ""}">${fmt(v)}</td>`).join("")}</tr>`).join("");
+  $("results").innerHTML = head + `<tbody>${body}</tbody>`;
+  $("table-title").textContent = r.rows.length < r.row_count ? `Results (first ${r.rows.length} of ${r.row_count})` : "Results";
+}
+
+async function sendFeedback(rating, button) {
+  if (!current) return;
+  try {
+    await api("/feedback", { trace_id: current.trace_id, rating });
+    document.querySelectorAll(".feedback button").forEach(b => b.classList.toggle("chosen", b === button));
+    $("feedback-label").textContent = "Thanks — logged.";
+  } catch (e) { $("feedback-label").textContent = e.message; }
+}
+
+async function loadTables() {
+  try {
+    const tables = await api("/tables");
+    $("tables").classList.remove("muted");
+    $("tables").innerHTML = tables.map(t => `
+      <details><summary><span>${esc(t.name)}</span><span class="muted">${t.row_estimate.toLocaleString()}</span></summary>
+        <ul>${t.columns.map(c => `<li title="${esc(c.comment || "")}"><b>${esc(c.name)}</b> ${esc(c.type)}</li>`).join("")}</ul>
+      </details>`).join("");
+  } catch (e) { $("tables").textContent = e.message; }
+}
+
+async function checkHealth() {
+  try {
+    const h = await api("/health");
+    $("health").className = "dot " + (h.database ? "up" : "down");
+    $("model").textContent = `${h.provider} · ${h.model}`;
+  }
+  catch { $("health").className = "dot down"; }
+}
+
+$("examples").innerHTML = EXAMPLES.map(q => `<button class="chip">${esc(q)}</button>`).join("");
+$("examples").addEventListener("click", e => { if (e.target.matches(".chip")) { $("question").value = e.target.textContent; ask(); } });
+$("ask").addEventListener("click", ask);
+$("run").addEventListener("click", runSql);
+$("copy").addEventListener("click", () => navigator.clipboard.writeText($("sql").value));
+$("question").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) ask(); });
+$("sql").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) runSql(); });
+document.querySelectorAll(".feedback button").forEach(b => b.addEventListener("click", () => sendFeedback(Number(b.dataset.rating), b)));
+loadTables();
+checkHealth();
+</script>
+</body>
+</html>
