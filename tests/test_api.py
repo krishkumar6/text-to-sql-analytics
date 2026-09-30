@@ -72,6 +72,27 @@ def test_missing_credentials(client, monkeypatch, provider):
     assert run["status"] == "ok" and run["summary"] is None and run["chart"]
 
 
+def test_rate_limit_applies_to_llm_endpoints(client):
+    from app.ratelimit import RateLimiter
+
+    app.state.limiter = RateLimiter(per_client=1, window_s=3600, daily_cap=0)
+    client.fake.queue(summary())
+    assert client.post("/run", json={"sql": "SELECT 1"}).status_code == 200
+    limited = client.post("/ask", json={"question": "How many users?"})
+    assert limited.status_code == 429 and "wait" in limited.json()["detail"]
+    assert client.get("/tables").status_code == 200  # read-only metadata is never limited
+
+
+def test_traces_require_admin_token_when_configured(client, monkeypatch):
+    from dataclasses import replace
+
+    p = app.state.pipeline
+    monkeypatch.setattr(p, "settings", replace(p.settings, admin_token="s3cret"))
+    assert client.get("/traces").status_code == 404
+    assert client.get("/traces", headers={"x-admin-token": "wrong"}).status_code == 404
+    assert client.get("/traces", headers={"x-admin-token": "s3cret"}).status_code == 200
+
+
 def test_validation_errors(client):
     assert client.post("/ask", json={"question": ""}).status_code == 422
     assert client.post("/feedback", json={"trace_id": "x", "rating": 5}).status_code == 422

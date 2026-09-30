@@ -103,7 +103,7 @@ after every case, so it picks up where it stopped.
 - **Partial answers still help.** If the summary call fails, you still get the table and a chart
   picked by a simple rule. Provider outages and rate limits come back as clean 503 and 429 errors
   instead of crashes.
-- **Tests are free to run.** The LLM is swapped for scripted fakes, so all 69 tests cost nothing and
+- **Tests are free to run.** The LLM is swapped for scripted fakes, so all 75 tests cost nothing and
   give the same result every time.
 
 ## Run it
@@ -120,6 +120,25 @@ uvicorn app.main:app --reload
 
 Then open http://localhost:8000. Run the tests with `pytest` and the eval with
 `python -m evals.run_evals` (`--resume RUN_ID` continues a run that hit a rate limit).
+
+## Deploy
+
+The public demo runs on Render (the app, from the Dockerfile) and Neon (Postgres), both on free tiers.
+
+1. Create a Neon project in the Singapore region and copy its connection string.
+2. Create the roles, the trace table and the demo data in it:
+   ```bash
+   DATABASE_ADMIN_URL="postgresql://<owner>:<password>@<host>/<db>?sslmode=require" python -m scripts.setup_db
+   ```
+   This gives the two app roles random passwords, checks that the read-only role really can't write,
+   and prints `DATABASE_URL` and `TRACE_DATABASE_URL`.
+3. On Render, create a Blueprint from this repo ([render.yaml](render.yaml)) and paste those two URLs
+   and a `GROQ_API_KEY` when asked.
+
+Since a public demo spends my LLM quota, it has limits: 8 questions per visitor per hour and 40 per
+day overall (set in `render.yaml`). The trace log at `/traces` needs the `X-Admin-Token` header, and
+Render generates that value. The free instance sleeps when idle, so the first visit takes about 30–60
+seconds to wake it.
 
 ## What's next
 

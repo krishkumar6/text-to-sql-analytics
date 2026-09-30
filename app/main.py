@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import hmac
 import logging
 import uuid
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from plotly.offline import get_plotlyjs
@@ -16,6 +17,7 @@ from app.config import ROOT, Settings
 from app.db import Database
 from app.llm import LLMError, LLMRateLimited, LLMUnavailable, create_llm
 from app.pipeline import Outcome, Pipeline
+from app.ratelimit import RateLimiter
 from app.schema import SchemaCatalog
 from app.traces import TraceStore
 
@@ -37,6 +39,8 @@ def build_pipeline(settings: Settings) -> Pipeline:
 async def lifespan(app: FastAPI):
     settings = Settings.from_env()
     app.state.pipeline = build_pipeline(settings)
+    app.state.limiter = RateLimiter(settings.rate_limit_per_client, settings.rate_limit_window_s,
+                                    settings.daily_question_cap)
     log.info("Loaded %d tables; provider=%s model=%s", len(app.state.pipeline.catalog.tables),
              settings.provider, settings.model)
     yield
@@ -115,7 +119,22 @@ def _pipeline(request: Request) -> Pipeline:
     return request.app.state.pipeline
 
 
-@app.post("/ask", response_model=AskResponse)
+def enforce_limits(request: Request) -> None:
+    """Per-client and daily limits on endpoints that spend LLM tokens."""
+    # Behind a proxy, uvicorn's --proxy-headers makes this the real client IP (see Dockerfile).
+    client = request.client.host if request.client else "unknown"
+    refusal = request.app.state.limiter.check(client)
+    if refusal:
+        raise HTTPException(429, refusal)
+
+
+def require_admin(request: Request) -> None:
+    token = _pipeline(request).settings.admin_token
+    if token and not hmac.compare_digest(request.headers.get("x-admin-token", ""), token):
+        raise HTTPException(404, "Not Found")  # don't advertise that the endpoint exists
+
+
+@app.post("/ask", response_model=AskResponse, dependencies=[Depends(enforce_limits)])
 def ask(body: AskRequest, request: Request) -> AskResponse:
     try:
         outcome = _pipeline(request).ask(body.question.strip())
@@ -128,7 +147,7 @@ def ask(body: AskRequest, request: Request) -> AskResponse:
     return AskResponse.from_outcome(outcome)
 
 
-@app.post("/run", response_model=AskResponse)
+@app.post("/run", response_model=AskResponse, dependencies=[Depends(enforce_limits)])
 def run_sql(body: RunRequest, request: Request) -> AskResponse:
     """Execute SQL edited by the user, through the same guard and read-only role."""
     return AskResponse.from_outcome(_pipeline(request).run_sql(body.sql, body.question.strip()))
@@ -146,7 +165,7 @@ def feedback(body: FeedbackRequest, request: Request) -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.get("/traces")
+@app.get("/traces", dependencies=[Depends(require_admin)])
 def traces(request: Request, limit: int = 50) -> list[dict[str, Any]]:
     return _pipeline(request).traces.recent(min(max(limit, 1), 500))
 

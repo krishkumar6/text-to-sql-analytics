@@ -1,0 +1,29 @@
+# Render Blueprint: New > Blueprint > pick this repo. Database is external (Neon); see README "Deploy".
+services:
+  - type: web
+    name: text-to-sql-analytics
+    runtime: docker
+    plan: free
+    region: singapore  # keep the app next to the database (Neon: AWS ap-southeast-1)
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Printed by `python -m scripts.setup_db`; they contain passwords, so they are entered in the dashboard.
+      - key: DATABASE_URL
+        sync: false
+      - key: TRACE_DATABASE_URL
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: LLM_PROVIDER
+        value: groq
+      # /traces needs this in the X-Admin-Token header; Render generates a random value.
+      - key: ADMIN_TOKEN
+        generateValue: true
+      # Keep a public demo inside Groq's free tier (~3.3k tokens per question, 200k tokens/day).
+      - key: RATE_LIMIT_PER_CLIENT
+        value: "8"
+      - key: RATE_LIMIT_WINDOW_S
+        value: "3600"
+      - key: DAILY_QUESTION_CAP
+        value: "40"

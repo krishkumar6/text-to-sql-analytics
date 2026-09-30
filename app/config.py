@@ -33,6 +33,12 @@ class Settings:
     max_lookup_calls: int
     schemas: tuple[str, ...]
     business_context_path: Path
+    # Public-demo protection. 0 disables a limit.
+    rate_limit_per_client: int
+    rate_limit_window_s: int
+    daily_question_cap: int
+    # When set, /traces requires the X-Admin-Token header. Unset = open (local development).
+    admin_token: str
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -57,4 +63,8 @@ class Settings:
             max_lookup_calls=_int("MAX_LOOKUP_CALLS", 4),
             schemas=tuple(s.strip() for s in os.getenv("DB_SCHEMAS", "public").split(",") if s.strip()),
             business_context_path=Path(os.getenv("BUSINESS_CONTEXT_PATH", ROOT / "db" / "business_context.md")),
+            rate_limit_per_client=_int("RATE_LIMIT_PER_CLIENT", 20),
+            rate_limit_window_s=_int("RATE_LIMIT_WINDOW_S", 3600),
+            daily_question_cap=_int("DAILY_QUESTION_CAP", 0),
+            admin_token=os.getenv("ADMIN_TOKEN", ""),
         )
